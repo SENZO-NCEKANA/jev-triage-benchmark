@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Private working documents — never commit.
+PRIVATE-REFERENCE.md
+LINKEDIN-POST.md
+tools/sanitise-map.json
+
+# Superseded result files. results/raw.jsonl IS committed - the published
+# numbers have to be recomputable by anyone who clones this - but results from
+# a corpus that has since changed would invite a comparison that is not valid.
+results/*superseded*
+
+# Secrets
+.env
+.env.*

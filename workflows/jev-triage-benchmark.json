@@ -1,0 +1,241 @@
+{
+  "name": "Jev · Triage Benchmark",
+  "nodes": [
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c6b29a53-00f1-4187-9a88-c448fe17d0e7",
+              "name": "id",
+              "value": "ENQ-0006",
+              "type": "string"
+            },
+            {
+              "id": "e31980a3-1a97-483b-9be8-65282e0ffdd5",
+              "name": "message",
+              "value": "Morning,\n\nCan someone reconcile my account? Invoice INV-2026-1053 for R7 632 appears twice on my statement but only once in my bank records. Thanks in advance.\n\nSibusiso\nPolokwane Tyre Fitment\n",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        -176
+      ],
+      "name": "01 · One test message"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.typesafe.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"state\": {{ JSON.stringify($json.message) }},\n  \"model\": \"jev-latest\",\n  \"questions\": {\n    \"department\": {\n      \"type\": \"choice\",\n      \"instructions\": \"Which team should handle this message?\",\n      \"criteria\": {\n        \"billing\": \"Payments, invoices, refunds, pricing disputes, failed debit orders\",\n        \"technical\": \"Bugs, errors, outages, logins, integrations, anything broken\",\n        \"sales\": \"Pricing questions before buying, upgrades, demos, new accounts\"\n      }\n    },\n    \"urgency\": {\n      \"type\": \"score\",\n      \"instructions\": \"How quickly does this need a response?\",\n      \"criteria\": [\"Not urgent\", \"Needs attention this week\", \"Blocking business right now\"]\n    },\n    \"is_spam\": {\n      \"type\": \"choice\",\n      \"instructions\": \"Is this a genuine customer enquiry or unsolicited spam?\",\n      \"criteria\": {\n        \"no\": \"A real customer or prospect contacting the business\",\n        \"yes\": \"Unsolicited marketing, scams, cold outreach or phishing\"\n      }\n    },\n    \"frustration\": {\n      \"type\": \"score\",\n      \"instructions\": \"How frustrated is the sender?\",\n      \"criteria\": [\"Calm\", \"Frustrated\", \"Very angry\"]\n    }\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        -176
+      ],
+      "name": "02 · Jev classify",
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Jev v2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -176
+      ],
+      "name": "manual trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const a = $json.answers;\n\nreturn [{\n  json: {\n    id: $('01 · One test message').first().json.id,\n    department:             a.department.choice,\n    department_confidence:  a.department.confidence,\n    urgency:                a.urgency.score,\n    urgency_confidence:     a.urgency.confidence,\n    frustration:            a.frustration.score,\n    frustration_confidence: a.frustration.confidence,\n    is_spam:                a.is_spam.choice,\n    is_spam_confidence:     a.is_spam.confidence,\n    input_tokens:           $json.usage.input_tokens,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -176
+      ],
+      "name": "03 · Extract answers"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c7072d5f-f980-49f9-89d7-763b10432bd7",
+              "leftValue": "={{ $json.department_confidence }}",
+              "rightValue": 0.7,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        -176
+      ],
+      "name": "04 · Confident enough?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "77fa2ad2-966b-4568-b14b-bf3377272a24",
+              "name": "route",
+              "value": "auto-filed",
+              "type": "string"
+            },
+            {
+              "id": "03e53de0-3286-40b2-8625-2c0bfda8755e",
+              "name": "queue",
+              "value": "={{ $json.department }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1120,
+        -272
+      ],
+      "name": "05a · Auto-file"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0a4ec521-dbfa-4389-817f-d8d2edaabe3e",
+              "name": "route",
+              "value": "human review",
+              "type": "string"
+            },
+            {
+              "id": "84728092-134b-49b1-a841-4b3ea93093fd",
+              "name": "reason",
+              "value": "={{'department confidence ' + $json.department_confidence + ' is below the 0.70 threshold'}}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1120,
+        -80
+      ],
+      "name": "05b · Human review"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "01 · One test message": {
+      "main": [
+        [
+          {
+            "node": "02 · Jev classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "manual trigger": {
+      "main": [
+        [
+          {
+            "node": "01 · One test message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 · Jev classify": {
+      "main": [
+        [
+          {
+            "node": "03 · Extract answers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 · Extract answers": {
+      "main": [
+        [
+          {
+            "node": "04 · Confident enough?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 · Confident enough?": {
+      "main": [
+        [
+          {
+            "node": "05a · Auto-file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "05b · Human review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "nodeGroups": []
+}
