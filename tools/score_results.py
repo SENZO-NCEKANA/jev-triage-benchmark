@@ -259,6 +259,60 @@ def main():
     emit()
 
     # ---------------- confusion ------------------------------------------
+    # ---------------- thresholds ------------------------------------------
+    emit("## What each confidence threshold buys")
+    emit()
+    emit("Auto-file every answer at or above the threshold, send the rest to a "
+         "person. This is the table a routing threshold should be read off, rather "
+         "than picking a round number because it sounds right.")
+    emit()
+    emit("| threshold | " + " | ".join(f"{m} auto-files | at accuracy" for m in models) + " |")
+    emit("|---|" + "---|" * (2 * len(models)))
+    for thr in (0.70, 0.80, 0.90, 0.95):
+        cells = []
+        for m in models:
+            auto = hit = tot = 0
+            for r in (x for x in ok if x["model"] == m):
+                for field in schema.FIELDS:
+                    if not scoreable(field, r):
+                        continue
+                    conf = num((r["answers"].get(field) or {}).get("confidence"))
+                    if conf is None:
+                        continue
+                    tot += 1
+                    if conf >= thr:
+                        argmax, _, _ = predictions(field, r)
+                        if argmax is None:
+                            continue
+                        auto += 1
+                        hit += correct(field, r, argmax)
+            cells.append(f"{pct(auto, tot)} | **{pct(hit, auto)}**")
+        emit(f"| ≥ {thr:.2f} | " + " | ".join(cells) + " |")
+    emit()
+
+    # ---------------- how much of the scale gets used ---------------------
+    emit("## How much of the confidence scale each model uses")
+    emit()
+    emit("| model | distinct values | answers | most common |")
+    emit("|---|---|---|---|")
+    for m in models:
+        # Every answer counts here, including on spam rows: this measures the
+        # model's output behaviour, not whether the answer could be scored.
+        vals = [round(num(a.get("confidence")), 2)
+                for r in ok if r["model"] == m
+                for field in schema.FIELDS
+                for a in [r["answers"].get(field) or {}]
+                if num(a.get("confidence")) is not None]
+        if not vals:
+            continue
+        counts = Counter(vals)
+        top, n = counts.most_common(1)[0]
+        emit(f"| `{m}` | **{len(counts)}** | {len(vals)} | `{top:g}` used {n}× |")
+    emit()
+    emit("*A confidence number you can threshold on has to vary. One that clusters "
+         "on a few round values cannot separate a sure answer from an unsure one.*")
+    emit()
+
     emit("## Where department routing goes wrong")
     emit()
     for m in models:

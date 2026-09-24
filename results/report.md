@@ -63,6 +63,26 @@ The corpus contains rows written to be routable two ways. If the confidence numb
 
 *Mean reported confidence on `department`. A negative difference is the behaviour you want — and is what makes a routing threshold possible.*
 
+## What each confidence threshold buys
+
+Auto-file every answer at or above the threshold, send the rest to a person. This is the table a routing threshold should be read off, rather than picking a round number because it sounds right.
+
+| threshold | jev auto-files | at accuracy | llm auto-files | at accuracy |
+|---|---|---|---|---|
+| ≥ 0.70 |  89.1% | ** 95.7%** |  99.2% | ** 90.6%** |
+| ≥ 0.80 |  84.2% | ** 96.4%** |  89.4% | ** 94.4%** |
+| ≥ 0.90 |  76.0% | ** 96.4%** |  68.5% | ** 98.5%** |
+| ≥ 0.95 |  56.8% | ** 96.3%** |  31.3% | ** 99.2%** |
+
+## How much of the confidence scale each model uses
+
+| model | distinct values | answers | most common |
+|---|---|---|---|
+| `jev` | **69** | 800 | `1` used 249× |
+| `llm` | **11** | 800 | `0.9` used 299× |
+
+*A confidence number you can threshold on has to vary. One that clusters on a few round values cannot separate a sure answer from an unsure one.*
+
 ## Where department routing goes wrong
 
 ### `jev`
