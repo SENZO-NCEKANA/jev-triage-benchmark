@@ -45,6 +45,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -59,6 +60,31 @@ LLM_MODEL = "gpt-4.1-mini"
 
 RETRY_STATUSES = {429, 529, 500, 502, 503, 504}
 MAX_ATTEMPTS = 4
+
+# Upstream error bodies get stored in results/raw.jsonl and printed to the
+# terminal, and raw.jsonl is committed. An auth failure echoes the key back:
+# OpenAI's 401 reads "Incorrect API key provided: <first characters>...
+# <last characters>", which put a dozen characters of a live credential into
+# a file destined for a public repo. Nothing upstream is trusted to redact on
+# our behalf, so anything shaped like a key is scrubbed before it is written
+# or shown - and this comment carries no real fragment either, which is the
+# same rule applied to the code that enforces it.
+SECRET_SHAPES = re.compile(
+    r"(?:apikey|sk|tsk|gho|ghp|xox[abp])[-_][A-Za-z0-9_\-*]{4,}"
+    r"|Bearer\s+\S+",
+    re.IGNORECASE,
+)
+
+
+def redact(value):
+    """Scrub key-shaped substrings from anything about to be stored or printed."""
+    if isinstance(value, str):
+        return SECRET_SHAPES.sub("<redacted>", value)
+    if isinstance(value, dict):
+        return {k: redact(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact(v) for v in value]
+    return value
 
 
 class Endpoint:
@@ -139,7 +165,7 @@ def call_jev(ep, key, message):
         {"Authorization": f"Bearer {key}"},
     )
     if status != 200:
-        return {"ok": False, "status": status, "error": body, "ms": ms, "cold": cold}
+        return {"ok": False, "status": status, "error": redact(body), "ms": ms, "cold": cold}
 
     answers = body.get("answers", {})
     out = {}
@@ -179,12 +205,13 @@ def call_llm(ep, key, message):
         {"Authorization": f"Bearer {key}"},
     )
     if status != 200:
-        return {"ok": False, "status": status, "error": body, "ms": ms, "cold": cold}
+        return {"ok": False, "status": status, "error": redact(body), "ms": ms, "cold": cold}
 
     try:
         content = json.loads(body["choices"][0]["message"]["content"])
     except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        return {"ok": False, "status": status, "error": f"unparseable: {exc}", "ms": ms, "cold": cold}
+        return {"ok": False, "status": status, "error": redact(f"unparseable: {exc}"),
+                "ms": ms, "cold": cold}
 
     out = {}
     for field in schema.FIELDS:
@@ -231,16 +258,30 @@ def already_done(out_path, corpus_sha):
     the next run would have silently kept the superseded rows and scored a mix
     of old and new truth. So every record carries the corpus fingerprint, and a
     mismatch stops the run rather than quietly producing a blended result."""
-    done, seen_shas = set(), set()
+    done, seen_shas, keep = set(), set(), []
+    failures = 0
     if out_path.exists():
         for line in out_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if "id" in rec and "model" in rec:
-                done.add((rec["id"], rec["model"]))
             seen_shas.add(rec.get("corpus_sha"))
+            if "id" not in rec or "model" not in rec:
+                continue
+            # Only SUCCESSES count as done. An earlier version added every
+            # record, so a call that failed once was never retried - the
+            # resume feature quietly turned a transient 520 into a permanent
+            # hole in the run. Failed rows are dropped here rather than kept,
+            # so the retry replaces them instead of leaving two records for
+            # the same (id, model) for the scorers to disagree over.
+            if rec.get("ok"):
+                done.add((rec["id"], rec["model"]))
+                keep.append(line)
+            else:
+                failures += 1
 
     stale = seen_shas - {corpus_sha}
     if stale:
@@ -251,6 +292,11 @@ def already_done(out_path, corpus_sha):
             f"alongside new ones.\nMove the old file aside and re-run:\n"
             f"    mv {out_path} {out_path.with_suffix('.superseded.jsonl')}\n"
         )
+
+    if failures:
+        out_path.write_text("\n".join(keep) + ("\n" if keep else ""), encoding="utf-8")
+        print(f"dropped {failures} failed row(s) from {out_path} - they will be retried")
+
     return done
 
 
@@ -267,15 +313,24 @@ def main():
         if m not in ("jev", "llm"):
             sys.exit(f"unknown model '{m}' - use jev and/or llm")
 
+    # Both keys are pasted into prompts that deliberately do not echo, so the
+    # wrong one goes unnoticed until the API rejects it - and the rejection
+    # quotes part of the key back. Checking the prefix costs nothing and stops
+    # a credential being sent to the wrong vendor at all.
+    expected = {"jev": ("TYPESAFE_API_KEY", "apikey_"), "llm": ("OPENAI_API_KEY", "sk-")}
     keys = {}
-    if "jev" in wanted:
-        keys["jev"] = os.environ.get("TYPESAFE_API_KEY")
-        if not keys["jev"]:
-            sys.exit("TYPESAFE_API_KEY is not set")
-    if "llm" in wanted:
-        keys["llm"] = os.environ.get("OPENAI_API_KEY")
-        if not keys["llm"]:
-            sys.exit("OPENAI_API_KEY is not set")
+    for model in wanted:
+        var, prefix = expected[model]
+        key = os.environ.get(var)
+        if not key:
+            sys.exit(f"{var} is not set")
+        if not key.startswith(prefix):
+            sys.exit(
+                f"\n{var} does not start with '{prefix}'.\n"
+                f"That looks like a key for the other service. Nothing has been sent.\n"
+                f"Re-export {var} and try again.\n"
+            )
+        keys[model] = key
 
     rows, corpus_sha = load_corpus(args.corpus)
     if args.limit:
@@ -328,7 +383,7 @@ def main():
                 counts[model]["ok" if result.get("ok") else "fail"] += 1
                 if not result.get("ok"):
                     print(f"  ! {row['id']} {model} -> {result.get('status')} "
-                          f"{str(result.get('error'))[:120]}")
+                          f"{redact(str(result.get('error')))[:140]}")
 
             if i % 10 == 0 or i == len(rows):
                 rate = i / max(time.time() - started, 0.001)

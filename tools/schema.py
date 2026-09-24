@@ -35,7 +35,38 @@ SPAM = {
     "yes": "Unsolicited marketing, scams, cold outreach or phishing",
 }
 
-URGENCY_LEVELS = ["Not urgent", "Needs attention this week", "Blocking business right now"]
+# Score levels describe SITUATIONS, one dimension, each standing alone.
+#
+# v1 read "Not urgent" / "Needs attention this week" / "Blocking business
+# right now". Jev scored 64.7% on it against 87.2% on frustration, whose
+# levels were concrete states from the start. TypeSafe's own guidance in
+# primitives/score.md says why:
+#
+#   "Describe situations, not degrees."
+#   "Every level is evaluated separately. The model doesn't see a level's
+#    number or its neighbours."
+#   "Keep each Score question to one dimension."
+#
+# "Not urgent" is a degree, and a negation at that. The dimension below is
+# how much is stalled, and each level is a situation the model can match
+# state against without reference to the others.
+#
+# Frustration is deliberately NOT reworded: it is the control. If urgency
+# moves and frustration doesn't, the wording was the cause.
+# v1's full run is kept at results/raw.urgency-v1.jsonl.
+#
+# One more line from the same page, which governs how this gets judged:
+#   "Check the answers against known examples; higher confidence alone does
+#    not show that a description is better."
+# So the redesign is scored against the labels, never against confidence.
+URGENCY_LEVELS = [
+    "Nobody is waiting. The sender attaches no date and says it can be "
+    "handled whenever staff get to it.",
+    "Someone is waiting. The sender names a date, a month-end, or asks for "
+    "an answer today.",
+    "Work is blocked. The business cannot carry on until this is resolved.",
+]
+
 FRUSTRATION_LEVELS = ["Calm", "Frustrated", "Very angry"]
 
 INSTRUCTIONS = {

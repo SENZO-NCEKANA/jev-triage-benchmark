@@ -163,10 +163,20 @@ def main():
 
     gain = acc_b - jev_acc
     headroom = oracle_acc - jev_acc
-    emit(f"**Escalating on low confidence buys {gain:+.1f} points for "
-         f"{cost_b / (cj * 1000):.1f}× the cost of Jev alone.** Perfect routing would be "
-         f"worth {headroom:+.1f} points, so confidence-based routing captures "
-         f"{100 * gain / headroom:.0f}% of what is actually available.")
+    multiple = cost_b / (cj * 1000)
+    if gain > 0:
+        emit(f"**Escalating on low confidence buys {gain:+.1f} points for "
+             f"{multiple:.1f}× the cost of Jev alone.** Perfect routing would be worth "
+             f"{headroom:+.1f} points, so confidence-based routing captures "
+             f"{100 * gain / headroom:.0f}% of what is actually available.")
+    else:
+        # A negative result needs saying plainly rather than as a negative
+        # percentage of headroom, which reads as a typo.
+        emit(f"**Escalating on low confidence makes it worse: {gain:.1f} points, "
+             f"for {multiple:.1f}× the cost of Jev alone.** Even the best threshold "
+             f"tested loses accuracy. Perfect routing would have been worth "
+             f"{headroom:+.1f} points, so the signal is not merely weak here - "
+             f"following it moves in the wrong direction.")
     emit()
 
     emit("## Per-field cascade, across thresholds")
@@ -190,9 +200,10 @@ def main():
         if not rows:
             continue
         j = 100 * sum(answered_well(p["jev"], field) for p in rows) / len(rows)
-        l = 100 * sum(answered_well(p["llm"], field) for p in rows) / len(rows)
-        mark = lambda v, o: f"**{v:.1f}%**" if v > o else f"{v:.1f}%"  # noqa: E731
-        emit(f"| `{field}` | {mark(j, l)} | {mark(l, j)} |")
+        g = 100 * sum(answered_well(p["llm"], field) for p in rows) / len(rows)
+        def mark(v, o):
+            return f"**{v:.1f}%**" if v > o else f"{v:.1f}%"
+        emit(f"| `{field}` | {mark(j, g)} | {mark(g, j)} |")
     emit()
     emit("Jev being unsure does not mean the LLM will be right. Where Jev is weakest "
          "the LLM is better, but where Jev is strongest the LLM is much worse — so "
